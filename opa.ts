@@ -3,14 +3,39 @@ import { builtins } from "./builtins.ts";
 const textEn = new TextEncoder();
 const textDe = new TextDecoder();
 
-type BuiltinByNames = Record<string, number>;
 type BuiltinByIds = Record<number, string>;
 type BuiltinId = keyof BuiltinByIds;
 
 interface WasmEnvironment {
   instance: WebAssembly.Instance;
-  builtinByNames: BuiltinByNames;
   builtinByIds: BuiltinByIds;
+}
+
+interface OpaWasmExports {
+  eval: (ctxAddr: number) => number;
+  builtins: () => number;
+  entrypoints: () => number;
+  opa_eval_ctx_new: () => number;
+  opa_eval_ctx_set_input: (ctxAddr: number, valueAddr: number) => void;
+  opa_eval_ctx_set_data: (ctxAddr: number, valueAddr: number) => void;
+  opa_eval_ctx_set_entrypoint: (ctxAddr: number, entrypointId: number) => void;
+  opa_eval_ctx_get_result: (ctxAddr: number) => number;
+  opa_malloc: (size: number) => number;
+  opa_json_parse: (strAddr: number, size: number) => number;
+  opa_value_parse: (strAddr: number, size: number) => number;
+  opa_json_dump: (valueAddr: number) => number;
+  opa_value_dump: (valueAddr: number) => number;
+  opa_heap_ptr_set: (addr: number) => void;
+  opa_heap_ptr_get: () => number;
+  opa_value_add_path: (
+    baseValueAddr: number,
+    pathValueAddr: number,
+    valueAddr: number,
+  ) => number;
+  opa_value_remove_path: (
+    baseValueAddr: number,
+    pathValueAddr: number,
+  ) => number;
 }
 
 function stringDecoder(mem: WebAssembly.Memory) {
@@ -35,17 +60,16 @@ function _loadJSON(
     throw "unable to load undefined value into memory";
   }
 
+  const exports: OpaWasmExports = wasmInstance.exports as any;
   const str = textEn.encode(JSON.stringify(value));
-  const opaMalloc = wasmInstance.exports.opa_malloc as CallableFunction;
-  const rawAddr: number = opaMalloc(str.length);
+  const rawAddr = exports.opa_malloc(str.length);
   const buf = new Uint8Array(memory.buffer);
 
   str.forEach((value, i) => {
     buf[rawAddr + i] = value;
   });
 
-  const opaJsonParse = wasmInstance.exports.opa_json_parse as CallableFunction;
-  const parsedAddr: number = opaJsonParse(rawAddr, str.length);
+  const parsedAddr = exports.opa_json_parse(rawAddr, str.length);
 
   if (parsedAddr === 0) {
     throw "failed to parse json value";
@@ -58,10 +82,10 @@ function _dumpJSON(
   memory: WebAssembly.Memory,
   addr: number,
 ) {
-  const opaJsonDump = wasmInstance.exports.opa_json_dump as CallableFunction;
-  const rawAddr: number = opaJsonDump(addr);
+  const exports: OpaWasmExports = wasmInstance.exports as any;
+  const rawAddr = exports.opa_json_dump(addr);
   const buf = new Uint8Array(memory.buffer);
-  const endAddr = buf.indexOf(0);
+  const endAddr = buf.indexOf(0, rawAddr);
   const str = buf.slice(rawAddr, endAddr);
 
   return JSON.parse(textDe.decode(str));
@@ -189,17 +213,18 @@ async function _loadPolicy(
 
   env.instance = wasm.instance;
 
-  const builtinsInst = env.instance.exports.builtins as CallableFunction;
-  const builtinsAddr: number = builtinsInst();
-
-  env.builtinByNames = _dumpJSON(
+  const exports: OpaWasmExports = env.instance.exports as any;
+  const builtinsAddr: number = exports.builtins();
+  const builtinByNames = _dumpJSON(
     env.instance,
     memory,
     builtinsAddr,
   );
 
   env.builtinByIds = Object.fromEntries(
-    Object.entries(builtins).map((([k, v]) => [Number(v), String(k)])),
+    Object.entries(builtinByNames!).map(
+      (([k, v]) => [Number(v), String(k)]),
+    ),
   );
 
   return wasm;
@@ -208,17 +233,10 @@ async function _loadPolicy(
 class LoadedPolicy {
   private mem: WebAssembly.Memory;
   private wasmInstance: WebAssembly.Instance;
-  private exports: WebAssembly.Exports;
+  private exports: OpaWasmExports;
   private dataAddr: number;
   private baseHeapPtr: number;
   private dataHeapPtr: number;
-  private eval: (ctxAddr: number) => number;
-  private opa_eval_ctx_get_result: (ctxAddr: number) => number;
-  private opa_eval_ctx_new: () => number;
-  private opa_eval_ctx_set_data: (ctxAddr: number, valueAddr: number) => void;
-  private opa_eval_ctx_set_input: (ctxAddr: number, valueAddr: number) => void;
-  private opa_heap_ptr_get: () => number;
-  private opa_heap_ptr_set: (addr: number) => void;
 
   constructor(
     policy: WebAssembly.WebAssemblyInstantiatedSource,
@@ -226,31 +244,20 @@ class LoadedPolicy {
   ) {
     this.mem = memory;
     this.wasmInstance = policy.instance;
-    this.exports = this.wasmInstance.exports;
-    this.eval = this.getExport("eval");
-    this.opa_eval_ctx_get_result = this.getExport("opa_eval_ctx_get_result");
-    this.opa_eval_ctx_new = this.getExport("opa_eval_ctx_new");
-    this.opa_eval_ctx_set_data = this.getExport("opa_eval_ctx_set_data");
-    this.opa_eval_ctx_set_input = this.getExport("opa_eval_ctx_set_input");
-    this.opa_heap_ptr_get = this.getExport("opa_heap_ptr_get");
-    this.opa_heap_ptr_set = this.getExport("opa_heap_ptr_set");
+    this.exports = this.wasmInstance.exports as any;
     this.dataAddr = _loadJSON(this.wasmInstance, this.mem, {});
-    this.baseHeapPtr = this.opa_heap_ptr_get();
+    this.baseHeapPtr = this.exports.opa_heap_ptr_get();
     this.dataHeapPtr = this.baseHeapPtr;
   }
 
-  private getExport(key: string): any {
-    return this.exports[key];
-  }
-
   evaluate(input: any) {
-    this.opa_heap_ptr_set(this.dataHeapPtr);
+    this.exports.opa_heap_ptr_set(this.dataHeapPtr);
     const inputAddr = _loadJSON(this.wasmInstance, this.mem, input);
-    const ctxAddr = this.opa_eval_ctx_new();
-    this.opa_eval_ctx_set_input(ctxAddr, inputAddr);
-    this.opa_eval_ctx_set_data(ctxAddr, this.dataAddr);
-    this.eval(ctxAddr);
-    const resultAddr = this.opa_eval_ctx_get_result(ctxAddr);
+    const ctxAddr = this.exports.opa_eval_ctx_new();
+    this.exports.opa_eval_ctx_set_input(ctxAddr, inputAddr);
+    this.exports.opa_eval_ctx_set_data(ctxAddr, this.dataAddr);
+    this.exports.eval(ctxAddr);
+    const resultAddr = this.exports.opa_eval_ctx_get_result(ctxAddr);
 
     return _dumpJSON(this.wasmInstance, this.mem, resultAddr);
   }
@@ -261,8 +268,14 @@ class LoadedPolicy {
   }
 
   setData(data: any) {
-    this.opa_heap_ptr_set(this.baseHeapPtr);
+    this.exports.opa_heap_ptr_set(this.baseHeapPtr);
     this.dataAddr = _loadJSON(this.wasmInstance, this.mem, data);
-    this.dataHeapPtr = this.opa_heap_ptr_get();
+    this.dataHeapPtr = this.exports.opa_heap_ptr_get();
   }
+}
+
+export async function loadPolicy(regoWasm: BufferSource) {
+  const memory = new WebAssembly.Memory({ initial: 5 });
+  const policy = await _loadPolicy(regoWasm, memory);
+  return new LoadedPolicy(policy, memory);
 }
