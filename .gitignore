@@ -1,1 +1,5 @@
 /.vscode/
+**/data.json
+**/bundle.tar.gz
+**/policy.wasm
+**/.manifest
