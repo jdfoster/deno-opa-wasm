@@ -5,3 +5,4 @@ export * from "./numbers.ts";
 export * from "./regex.ts";
 export * from "./strings.ts";
 export * from "./types.ts";
+export * from "./utils.ts";

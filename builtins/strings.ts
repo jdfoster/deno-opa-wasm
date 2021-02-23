@@ -1,5 +1,10 @@
 export { sprintf } from "https://deno.land/std/fmt/printf.ts";
 
+export const concat = (
+  delimiter: string,
+  arr: any[],
+) => arr.join(delimiter);
+
 export const contains = (
   s: string,
   search: string,
@@ -40,8 +45,3 @@ export const substring = (
   start: number,
   length: number,
 ) => s.substr(start, length);
-
-export const concat = (
-  delimiter: string,
-  arr: any[],
-) => arr.join(delimiter);

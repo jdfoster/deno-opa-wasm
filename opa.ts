@@ -1,7 +1,7 @@
 import { builtins } from "./builtins.ts";
 
-const textEn = new TextEncoder();
-const textDe = new TextDecoder();
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 type BuiltinByIds = Record<number, string>;
 type BuiltinId = keyof BuiltinByIds;
@@ -61,7 +61,7 @@ function _loadJSON(
   }
 
   const exports: OpaWasmExports = wasmInstance.exports as any;
-  const str = textEn.encode(JSON.stringify(value));
+  const str = encoder.encode(JSON.stringify(value));
   const rawAddr = exports.opa_malloc(str.length);
   const buf = new Uint8Array(memory.buffer);
 
@@ -88,7 +88,7 @@ function _dumpJSON(
   const endAddr = buf.indexOf(0, rawAddr);
   const str = buf.slice(rawAddr, endAddr);
 
-  return JSON.parse(textDe.decode(str));
+  return JSON.parse(decoder.decode(str));
 }
 
 function _builtinCall(
@@ -100,20 +100,17 @@ function _builtinCall(
 ) {
   const builtinName = builtinById[builtinId];
 
-  if (!(builtinId in builtins)) {
-    throw {
-      message: "not implemented: built-in function " +
-        builtinId +
-        ": " +
-        builtinById[builtinId],
-    };
+  if (!(builtinName in builtins)) {
+    throw new Error(
+      `[NotImplemented] built-in function builtinId: ${builtinById[builtinId]}`,
+    );
   }
 
   const builtin = builtins[builtinName];
   const args = rest.map((arg) => _dumpJSON(wasmInstance, memory, arg));
   const result = builtin(...args);
 
-  return _loadJSON(wasmInstance, memory, result);
+  return result !== undefined && _loadJSON(wasmInstance, memory, result);
 }
 
 async function _loadPolicy(
@@ -127,13 +124,17 @@ async function _loadPolicy(
   const wasm = await WebAssembly.instantiate(policy_wasm, {
     env: {
       memory: memory,
-      opa_abort: function (addr: number) {
+      opa_abort(
+        addr: number,
+      ) {
         throw addr2string(addr);
       },
-      opa_println: function (addr: number) {
+      opa_println(
+        addr: number,
+      ) {
         console.log(addr2string(addr));
       },
-      opa_builtin0: function (
+      opa_builtin0(
         builtinId: number,
         ctx: unknown,
       ) {
@@ -144,7 +145,7 @@ async function _loadPolicy(
           builtinId,
         );
       },
-      opa_builtin1: function (
+      opa_builtin1(
         builtinId: number,
         ctx: unknown,
         _1: any,
@@ -157,7 +158,7 @@ async function _loadPolicy(
           _1,
         );
       },
-      opa_builtin2: function (
+      opa_builtin2(
         builtin_id: number,
         ctx: unknown,
         _1: any,
@@ -172,7 +173,7 @@ async function _loadPolicy(
           _2,
         );
       },
-      opa_builtin3: function (
+      opa_builtin3(
         builtin_id: number,
         ctx: unknown,
         _1: any,
@@ -189,7 +190,7 @@ async function _loadPolicy(
           _3,
         );
       },
-      opa_builtin4: function (
+      opa_builtin4(
         builtin_id: number,
         ctx: unknown,
         _1: any,
@@ -262,7 +263,7 @@ class LoadedPolicy {
     return _dumpJSON(this.wasmInstance, this.mem, resultAddr);
   }
 
-  evalBool(input: any) {
+  evaluateToBool(input: any) {
     const rs: boolean[] = this.evaluate(input);
     return rs && rs.length === 1 && rs[0] === true;
   }
