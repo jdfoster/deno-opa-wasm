@@ -231,7 +231,7 @@ async function _loadPolicy(
   return wasm;
 }
 
-class LoadedPolicy {
+export class LoadedPolicy {
   private mem: WebAssembly.Memory;
   private wasmInstance: WebAssembly.Instance;
   private exports: OpaWasmExports;
