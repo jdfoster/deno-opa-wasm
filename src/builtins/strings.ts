@@ -1,4 +1,4 @@
-export { sprintf } from "https://deno.land/std/fmt/printf.ts";
+import { sprintf as denoSprintf } from "https://deno.land/std/fmt/printf.ts";
 
 export const concat = (
   delimiter: string,
@@ -45,3 +45,8 @@ export const substring = (
   start: number,
   length: number,
 ) => s.substr(start, length);
+
+export const sprintf = (
+  s: string,
+  values: any[],
+) => denoSprintf(s, ...values);
