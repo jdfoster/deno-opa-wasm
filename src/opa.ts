@@ -1,3 +1,4 @@
+import { indexOf } from "https://deno.land/std/bytes/mod.ts";
 import { builtins } from "./builtins.ts";
 
 const encoder = new TextEncoder();
@@ -40,14 +41,11 @@ interface OpaWasmExports {
 
 function stringDecoder(mem: WebAssembly.Memory) {
   return function (addr: number) {
-    const arr = new Int8Array(mem.buffer);
-    let s = "";
+    const memoryData = new Uint8Array(mem.buffer, addr);
+    const idx = indexOf(memoryData, Uint8Array.from([0]));
+    const last = idx === -1 ? memoryData.byteLength : idx;
 
-    while (arr[addr] !== 0) {
-      s += String.fromCharCode(arr[addr++]);
-    }
-
-    return s;
+    return (new TextDecoder()).decode(memoryData.slice(0, last));
   };
 }
 

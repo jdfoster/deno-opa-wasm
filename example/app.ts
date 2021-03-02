@@ -1,6 +1,6 @@
 import { loadPolicy } from "../mod.ts";
 
-const f = await Deno.readFile("./wasm/policy.wasm");
+const f = await Deno.readFile("./policy.wasm");
 const policy = await loadPolicy(f);
 
 policy.setData({ world: "world" });
